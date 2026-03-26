@@ -1,16 +1,16 @@
-# ============================================
-# ShortsForge 기본 설정
+﻿# ============================================
+# ShortsForge 湲곕낯 ?ㅼ젙
 # ============================================
 
 project:
   output_dir: "./output"
-  name_format: "{date}_{topic_slug}"  # 프로젝트 폴더명 패턴
+  name_format: "{date}_{topic_slug}"  # ?꾨줈?앺듃 ?대뜑紐??⑦꽩
 
 video:
   width: 1080
-  height: 1920          # 9:16 세로
+  height: 1920          # 9:16 ?몃줈
   fps: 30
-  max_duration_sec: 58  # 60초 미만 (여유 2초)
+  max_duration_sec: 58  # 60珥?誘몃쭔 (?ъ쑀 2珥?
   format: "mp4"
   codec: "libx264"
 
@@ -18,23 +18,22 @@ script:
   provider: "claude"           # claude | gemini | openai
   model: "claude-sonnet-4-20250514"
   language: "ko"
-  max_chars: 500               # 60초 기준 약 400~500자
-  temperature: 0.8
-  domain: "해외출장/해외박람회/기업연수"
-  brand_name: "리키항공"
+  max_chars: 500               # 60珥?湲곗? ??400~500??  temperature: 0.8
+  domain: "?댁쇅異쒖옣/?댁쇅諛뺣엺??湲곗뾽?곗닔"
+  brand_name: "由ы궎??났"
 
 tts:
   provider: "edge"             # edge | google | elevenlabs
-  voice_id: "ko-KR-SunHiNeural"  # Edge TTS 한국어 여성
-  speed: "+10%"                # Edge TTS 속도 포맷
+  voice_id: "ko-KR-SunHiNeural"  # Edge TTS ?쒓뎅???ъ꽦
+  speed: "+10%"                # Edge TTS ?띾룄 ?щ㎎
   output_format: "mp3"
 
 media:
   provider: "pexels"           # pexels | pixabay | local
   fallback: "local"
-  clip_duration_sec: 5         # 개별 클립 기본 길이
+  clip_duration_sec: 5         # 媛쒕퀎 ?대┰ 湲곕낯 湲몄씠
   max_clips: 6
-  search_language: "en"        # 스톡사이트는 영문 검색이 결과 많음
+  search_language: "en"        # ?ㅽ넚?ъ씠?몃뒗 ?곷Ц 寃?됱씠 寃곌낵 留롮쓬
   local_media_dir: "./assets/local_clips"
 
 style:
@@ -52,6 +51,6 @@ style:
 
 scheduler:
   enabled: true
-  run_time: "06:00"          # 매일 실행 시간 (24시간 형식)
-  daily_count: 1             # 하루 생성 편수
-  auto_refill_threshold: 3   # 대기 주제가 이 수 이하면 자동 보충
+  run_time: "06:00"          # 留ㅼ씪 ?ㅽ뻾 ?쒓컙 (24?쒓컙 ?뺤떇)
+  daily_count: 1             # ?섎（ ?앹꽦 ?몄닔
+  auto_refill_threshold: 3   # ?湲?二쇱젣媛 ?????댄븯硫??먮룞 蹂댁땐
