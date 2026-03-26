@@ -1,35 +1,11 @@
-# ============================================
-# ShortsForge 의존성
-# pip install -r requirements.txt
-# ============================================
-
-# 설정 관리
 PyYAML>=6.0
 python-dotenv>=1.0
-
-# 웹 대시보드
 Flask>=3.0
-
-# 스케줄러
 schedule>=1.2
-
-# AI 스크립트 생성
 anthropic>=0.30.0
-
-# 확장용 (필요시 주석 해제)
-# google-generativeai>=0.8.0  # Gemini
-
-# TTS (MVP: Edge TTS)
 edge-tts>=6.1
-mutagen>=1.47        # 오디오 메타데이터(길이 측정)
-
-# 미디어 수집
+mutagen>=1.47
 requests>=2.31
-
-# 영상 편집
 moviepy==1.0.3
+Pillow==9.5.0
 
-# ---- 확장용 (필요시 주석 해제) ----
-# openai>=1.0           # OpenAI 스크립트 생성
-# google-cloud-texttospeech>=2.14  # Google Cloud TTS
-# elevenlabs>=1.0       # ElevenLabs TTS
