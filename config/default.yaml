@@ -1,0 +1,57 @@
+# ============================================
+# ShortsForge 기본 설정
+# ============================================
+
+project:
+  output_dir: "./output"
+  name_format: "{date}_{topic_slug}"  # 프로젝트 폴더명 패턴
+
+video:
+  width: 1080
+  height: 1920          # 9:16 세로
+  fps: 30
+  max_duration_sec: 58  # 60초 미만 (여유 2초)
+  format: "mp4"
+  codec: "libx264"
+
+script:
+  provider: "claude"           # claude | gemini | openai
+  model: "claude-sonnet-4-20250514"
+  language: "ko"
+  max_chars: 500               # 60초 기준 약 400~500자
+  temperature: 0.8
+  domain: "해외출장/해외박람회/기업연수"
+  brand_name: "리키항공"
+
+tts:
+  provider: "edge"             # edge | google | elevenlabs
+  voice_id: "ko-KR-SunHiNeural"  # Edge TTS 한국어 여성
+  speed: "+10%"                # Edge TTS 속도 포맷
+  output_format: "mp3"
+
+media:
+  provider: "pexels"           # pexels | pixabay | local
+  fallback: "local"
+  clip_duration_sec: 5         # 개별 클립 기본 길이
+  max_clips: 6
+  search_language: "en"        # 스톡사이트는 영문 검색이 결과 많음
+  local_media_dir: "./assets/local_clips"
+
+style:
+  font: "NotoSansKR-Bold"
+  font_path: "./assets/fonts/NotoSansKR-Bold.ttf"
+  font_size: 48
+  text_color: "#FFFFFF"
+  text_stroke_color: "#000000"
+  text_stroke_width: 2
+  text_position: "center"     # center | bottom
+  bg_music_dir: "./assets/bgm"
+  bg_music_volume: 0.08
+  transition: "crossfade"     # crossfade | fade | cut
+  transition_duration: 0.5
+
+scheduler:
+  enabled: true
+  run_time: "06:00"          # 매일 실행 시간 (24시간 형식)
+  daily_count: 1             # 하루 생성 편수
+  auto_refill_threshold: 3   # 대기 주제가 이 수 이하면 자동 보충

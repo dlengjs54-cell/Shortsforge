@@ -1,0 +1,13 @@
+__pycache__
+*.pyc
+.git
+.gitignore
+output/
+venv/
+.env
+*.zip
+*.md
+!requirements.txt
+test_all.py
+ShortsForge 실행.bat
+스케줄러 시작.bat
