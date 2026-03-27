@@ -1,4 +1,3 @@
-```
 project:
   output_dir: "./output"
   name_format: "{date}_{topic_slug}"
