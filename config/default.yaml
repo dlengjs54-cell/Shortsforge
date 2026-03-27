@@ -1,11 +1,12 @@
+```
 project:
   output_dir: "./output"
   name_format: "{date}_{topic_slug}"
 
 video:
-  width: 1080
-  height: 1920
-  fps: 30
+  width: 720
+  height: 1280
+  fps: 24
   max_duration_sec: 58
   format: "mp4"
   codec: "libx264"
@@ -34,7 +35,7 @@ media:
 style:
   font: "NotoSansKR-Bold"
   font_path: "./assets/fonts/NotoSansKR-Bold.ttf"
-  font_size: 48
+  font_size: 36
   text_color: "#FFFFFF"
   text_stroke_color: "#000000"
   text_stroke_width: 2
