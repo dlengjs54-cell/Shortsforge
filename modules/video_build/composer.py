@@ -1,9 +1,8 @@
 """
-FFmpeg video assembly v4 - OOM-safe
-512MB RAM Docker compatible
+FFmpeg video assembly v5 - OOM-safe + guaranteed subtitles
 """
 
-__version__ = "4.0.0"
+__version__ = "5.0.0"
 
 import json
 import subprocess
@@ -54,7 +53,7 @@ def _find_font(config):
 
 def _run(cmd, stage="?", timeout=180):
     cs = " ".join(str(c) for c in cmd)
-    print(f"   [{stage}] {cs[:200]}")
+    print(f"   [{stage}] {cs[:250]}")
     try:
         r = subprocess.run(
             cmd, capture_output=True,
@@ -105,14 +104,20 @@ def _wrap(t, n=16):
 
 
 def _write_txt(text, path):
-    path.write_text(_wrap(text), encoding="utf-8")
+    wrapped = _wrap(text)
+    path.write_text(wrapped, encoding="utf-8")
+    return wrapped
 
 
-def _dt(tf, font, fs):
+def _dt(tf, font, fs, position="center"):
     if not font or not tf.exists():
         return ""
     t = str(tf).replace(":", "\\:")
     f = font.replace(":", "\\:")
+    if position == "bottom":
+        ypos = "y=h-text_h-80"
+    else:
+        ypos = "y=(h-text_h)/2"
     return ":".join([
         f"drawtext=textfile='{t}'",
         f"fontfile='{f}'",
@@ -121,7 +126,7 @@ def _dt(tf, font, fs):
         "borderw=2",
         "bordercolor=black",
         "x=(w-text_w)/2",
-        "y=(h-text_h)/2",
+        ypos,
         "line_spacing=8",
         "box=1",
         "boxcolor=black@0.4",
@@ -142,7 +147,7 @@ def _inner(project, config):
     _log_ver()
     meta = json.load(
         open(project.audio_meta_path, encoding="utf-8"))
-    json.load(
+    script = json.load(
         open(project.script_path, encoding="utf-8"))
     json.load(
         open(project.media_manifest_path, encoding="utf-8"))
@@ -158,12 +163,22 @@ def _inner(project, config):
     tmp = project.dir / "_temp"
     tmp.mkdir(exist_ok=True)
 
+    # === SUBTITLE MAP LOG ===
+    print(f"   === SUBTITLE MAP ===")
+    for i, seg in enumerate(segs):
+        tx = seg.get("text", "")
+        lb = seg["label"]
+        has = "YES" if tx else "EMPTY"
+        preview = tx[:40] if tx else "(none)"
+        print(f"   [sub-map] s{i:02d} [{lb}] {has}: {preview}")
+
+    # === STEP 1: pre-downscale ===
     print(f"   === STEP 1: pre-downscale ===")
-    ds_clips = {}
-    for cp in clips:
-        dur, cw, ch = _probe(cp)
-        print(f"   {cp.name}: {cw}x{ch} {dur:.1f}s")
-        ds = tmp / f"ds_{cp.name}"
+    ds_map = {}
+    for idx, cp in enumerate(clips):
+        dur_c, cw, ch = _probe(cp)
+        print(f"   {cp.name}: {cw}x{ch} {dur_c:.1f}s")
+        ds = tmp / f"ds_{idx:02d}.mp4"
         vf_ds = (
             f"scale={w}:{h}"
             f":force_original_aspect_ratio=increase"
@@ -177,55 +192,86 @@ def _inner(project, config):
             *FF_MEM,
             "-pix_fmt", "yuv420p",
             "-an", str(ds),
-        ], stage=f"ds-{cp.stem}", timeout=120)
+        ], stage=f"ds-{idx:02d}", timeout=120)
         if ds.exists():
-            ds_clips[cp.name] = ds
+            ds_map[idx] = ds
             kb = ds.stat().st_size // 1024
-            print(f"   ds_{cp.name} OK {kb}KB")
+            print(f"   ds_{idx:02d}.mp4 OK {kb}KB")
 
+    # === STEP 2: segments with guaranteed subtitles ===
     print(f"   === STEP 2: segments ===")
     outs = []
     for i, seg in enumerate(segs):
         sd = seg["end"] - seg["start"]
         tx = seg.get("text", "")
         lb = seg["label"]
-        print(f"   [{lb}] {sd:.1f}s")
 
-        tf = tmp / f"t{i:02d}.txt"
+        # Write subtitle text file
+        tf = tmp / f"sub_{i:02d}.txt"
         if tx:
-            _write_txt(tx, tf)
+            wrapped = _write_txt(tx, tf)
+            print(f"   [sub] s{i:02d}: wrote {tf.name} = '{wrapped[:30]}...'")
+        else:
+            print(f"   [sub] s{i:02d}: NO TEXT for [{lb}]")
 
-        cp = _find_clip(i, lb, clips)
+        # Find matching clip
+        cp_match = _find_clip(i, lb, clips)
         op = tmp / f"s{i:02d}.mp4"
-        ds = ds_clips.get(cp.name) if cp else None
+
+        # Get downscaled version
+        ds = None
+        if cp_match:
+            ci = clips.index(cp_match) if cp_match in clips else -1
+            if ci >= 0:
+                ds = ds_map.get(ci)
 
         if ds and ds.exists():
             dd = _probe(ds)[0]
+            dt_filter = _dt(tf, font, fs) if tx else ""
+
+            print(f"   [{lb}] clip={ds.name} dur={dd:.1f} sub={'YES' if dt_filter else 'NO'}")
+
             if dd > 0 and dd < sd:
-                print(f"   pad {dd:.1f}->{sd:.1f}")
-                _seg_pad(ds, op, sd, dd,
-                         w, h, fps, tf, font, fs)
+                _seg_pad(ds, op, sd, dd, w, h,
+                         fps, dt_filter)
             else:
-                _seg_trim(ds, op, sd,
-                          fps, tf, font, fs)
+                _seg_trim(ds, op, sd, fps, dt_filter)
         else:
-            _seg_bg(op, sd, w, h,
-                    fps, tf, font, fs)
+            dt_filter = _dt(tf, font, fs) if tx else ""
+            print(f"   [{lb}] color bg sub={'YES' if dt_filter else 'NO'}")
+            _seg_bg(op, sd, w, h, fps, dt_filter)
 
         if not op.exists():
             raise RuntimeError(f"seg {i} fail")
         kb = op.stat().st_size // 1024
-        print(f"   s{i:02d}.mp4 OK {kb}KB")
+        print(f"   s{i:02d}.mp4 OK {kb}KB sub={'applied' if tx else 'none'}")
         outs.append(op)
 
-    print(f"   === STEP 3: concat ===")
+    # === STEP 3: concat ===
+    print(f"   === STEP 3: concat {len(outs)} segs ===")
     cv = tmp / "c.mp4"
     _concat(outs, cv)
 
-    print(f"   === STEP 4: mux ===")
+    # === STEP 4: mux audio ===
+    print(f"   === STEP 4: mux audio ===")
     _mux(cv, project.audio_path,
          project.final_video_path, tdur)
 
+    # === STEP 5: thumbnail ===
+    print(f"   === STEP 5: thumbnail ===")
+    try:
+        from modules.video_build.thumbnail import generate_thumbnail
+        generate_thumbnail(
+            video_path=project.final_video_path,
+            output_path=project.dir / "thumbnail.jpg",
+            title=script.get("title", ""),
+            hook=script.get("hook", ""),
+            font=font,
+        )
+    except Exception as te:
+        print(f"   WARN: thumbnail failed: {te}")
+
+    # Cleanup
     for f in tmp.glob("*"):
         f.unlink()
     tmp.rmdir()
@@ -253,35 +299,28 @@ def _find_clip(i, lb, cl):
     return None
 
 
-def _seg_trim(ds, op, d, fps, tf, font, fs):
-    dt = _dt(tf, font, fs)
-    if dt:
-        _run([
-            "ffmpeg", "-y", "-i", str(ds),
-            "-t", str(d),
-            "-vf", dt,
-            "-r", str(fps),
-            "-c:v", "libx264", *FF_MEM,
-            "-pix_fmt", "yuv420p",
-            "-an", str(op),
-        ], stage=f"trim-{op.stem}", timeout=90)
-    else:
-        _run([
-            "ffmpeg", "-y", "-i", str(ds),
-            "-t", str(d),
-            "-r", str(fps),
-            "-c:v", "libx264", *FF_MEM,
-            "-pix_fmt", "yuv420p",
-            "-an", str(op),
-        ], stage=f"trim-{op.stem}", timeout=90)
+def _seg_trim(ds, op, d, fps, dt_filter):
+    vf = dt_filter if dt_filter else None
+    cmd = [
+        "ffmpeg", "-y", "-i", str(ds),
+        "-t", str(d),
+    ]
+    if vf:
+        cmd += ["-vf", vf]
+    cmd += [
+        "-r", str(fps),
+        "-c:v", "libx264", *FF_MEM,
+        "-pix_fmt", "yuv420p",
+        "-an", str(op),
+    ]
+    _run(cmd, stage=f"trim-{op.stem}", timeout=90)
 
 
-def _seg_pad(ds, op, td, cd, w, h, fps, tf, font, fs):
+def _seg_pad(ds, op, td, cd, w, h, fps, dt_filter):
     pad = td - cd
     vf = f"tpad=stop_mode=clone:stop_duration={pad:.2f}"
-    dt = _dt(tf, font, fs)
-    if dt:
-        vf += "," + dt
+    if dt_filter:
+        vf += "," + dt_filter
     _run([
         "ffmpeg", "-y", "-i", str(ds),
         "-vf", vf,
@@ -293,14 +332,13 @@ def _seg_pad(ds, op, td, cd, w, h, fps, tf, font, fs):
     ], stage=f"pad-{op.stem}", timeout=90)
 
 
-def _seg_bg(op, d, w, h, fps, tf, font, fs):
+def _seg_bg(op, d, w, h, fps, dt_filter):
     src = f"color=c=0x141420:s={w}x{h}:d={d}:r={fps}"
-    dt = _dt(tf, font, fs)
-    if dt:
+    if dt_filter:
         _run([
             "ffmpeg", "-y",
             "-f", "lavfi", "-i", src,
-            "-vf", dt,
+            "-vf", dt_filter,
             "-t", str(d),
             "-c:v", "libx264", *FF_MEM,
             "-pix_fmt", "yuv420p",
