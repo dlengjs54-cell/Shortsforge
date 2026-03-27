@@ -6,7 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-RUN find /etc -name "policy.xml" -exec sh -c 'echo "<policymap><policy domain=\"Undefined\" rights=\"all\"/></policymap>" > {}' \;
+RUN POLICY_PATH=$(find /etc -type f -name policy.xml | grep ImageMagick | head -n 1) && \
+    echo "Using policy file: $POLICY_PATH" && \
+    cp "$POLICY_PATH" "${POLICY_PATH}.bak" && \
+    sed -i 's#<policy domain="path" rights="none" pattern="@\*"/>#<policy domain="path" rights="read|write" pattern="@*"/>#g' "$POLICY_PATH"
 
 WORKDIR /app
 
@@ -19,7 +22,5 @@ RUN mkdir -p assets/fonts && \
     ln -sf /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc assets/fonts/NotoSansKR-Bold.ttf || true
 
 RUN mkdir -p output
-
-EXPOSE 5000
 
 CMD ["python", "run_cloud.py"]
