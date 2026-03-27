@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-RUN echo '<policymap><policy domain="Undefined" rights="all"/></policymap>' > /etc/ImageMagick-6/policy.xml
+RUN find /etc -name "policy.xml" -exec sh -c 'echo "<policymap><policy domain=\"Undefined\" rights=\"all\"/></policymap>" > {}' \;
 
 WORKDIR /app
 
