@@ -24,7 +24,6 @@ RUN mkdir -p assets/fonts && \
 
 RUN mkdir -p output
 
-EXPOSE 5000
+EXPOSE 8080
 
 CMD ["python", "run_cloud.py"]
-
