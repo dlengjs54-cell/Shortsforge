@@ -1,7 +1,3 @@
-"""
-FFmpeg 기반 영상 조립 (저메모리, ImageMagick 불필요)
-"""
-
 import json
 import subprocess
 import traceback
@@ -9,152 +5,197 @@ from pathlib import Path
 from core.config_loader import Config
 from core.project_manager import Project
 
-FONT_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+FONT = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 
 
-def _run_ffmpeg(cmd, timeout=180):
-    print(f"   > {' '.join(cmd[:6])}...")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    if result.returncode != 0:
-        print(f"   FFmpeg STDERR: {result.stderr[-500:]}")
-        raise RuntimeError(f"FFmpeg failed: {result.stderr[-200:]}")
-    return result
+def _ff(cmd, t=180):
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=t)
+    if r.returncode != 0:
+        print("STDERR:", r.stderr[-500:])
+        raise RuntimeError(r.stderr[-200:])
 
 
-def compose(project: Project, config: Config):
+def compose(project, config):
     try:
-        _compose_inner(project, config)
+        _do(project, config)
     except Exception as e:
-        print(f"VIDEO BUILD ERROR: {e}")
+        print("VIDEO ERROR:", e)
         traceback.print_exc()
         raise
 
 
-def _compose_inner(project: Project, config: Config):
-    print("   FFmpeg video build start...")
-
-    with open(project.audio_meta_path, "r", encoding="utf-8") as f:
-        audio_meta = json.load(f)
-    with open(project.script_path, "r", encoding="utf-8") as f:
-        script = json.load(f)
-    with open(project.media_manifest_path, "r", encoding="utf-8") as f:
-        media_manifest = json.load(f)
-
-    segments = audio_meta["segments"]
-    total_duration = audio_meta["total_duration_sec"]
+def _do(project, config):
+    print("FFmpeg build...")
+    meta = json.load(open(project.audio_meta_path, encoding="utf-8"))
+    script = json.load(open(project.script_path, encoding="utf-8"))
+    mmf = json.load(open(project.media_manifest_path, encoding="utf-8"))
+    segs = meta["segments"]
+    dur = meta["total_duration_sec"]
     w = config.get("video", "width", default=1080)
     h = config.get("video", "height", default=1920)
     fps = config.get("video", "fps", default=30)
-    font_size = config.get("style", "font_size", default=44)
-
-    font = FONT_PATH if Path(FONT_PATH).exists() else ""
-    if not font:
-        print("   WARN: font not found, text disabled")
+    fs = config.get("style", "font_size", default=44)
+    font = FONT if Path(FONT).exists() else ""
+    if font:
+        print("Font OK:", font)
     else:
-        print(f"   Font OK: {font}")
-
-    available_clips = sorted(project.media_dir.glob("*.mp4"))
-    temp_dir = project.dir / "_temp"
-    temp_dir.mkdir(exist_ok=True)
-
-    segment_files = []
-
-    for i, seg in enumerate(segments):
-        dur = seg["end"] - seg["start"]
-        text = seg.get("text", "")
-        label = seg["label"]
-        print(f"   [{label}] {dur:.1f}s - {text[:30]}...")
-
-        clip_path = _find_clip(i, label, available_clips)
-        seg_out = temp_dir / f"seg_{i:02d}.mp4"
-
-        if clip_path and clip_path.exists():
-            print(f"   clip: {clip_path.name}")
-            _seg_from_clip(clip_path, seg_out, dur, w, h, fps, text, font, font_size)
+        print("WARN: no font")
+    clips = sorted(project.media_dir.glob("*.mp4"))
+    td = project.dir / "_temp"
+    td.mkdir(exist_ok=True)
+    outs = []
+    for i, s in enumerate(segs):
+        d = s["end"] - s["start"]
+        tx = s.get("text", "")
+        lb = s["label"]
+        print(f"  [{lb}] {d:.1f}s")
+        cp = _fc(i, lb, clips)
+        op = td / f"s{i:02d}.mp4"
+        if cp and cp.exists():
+            _sv(cp, op, d, w, h, fps, tx, font, fs)
         else:
-            print(f"   clip: color bg")
-            _seg_from_color(seg_out, dur, w, h, fps, text, font, font_size)
-
-        if not seg_out.exists():
-            raise RuntimeError(f"Segment {i} failed")
-        print(f"   seg_{i:02d}.mp4 OK ({seg_out.stat().st_size // 1024}KB)")
-        segment_files.append(seg_out)
-
-    print(f"   Concat {len(segment_files)} segments...")
-    concat_mp4 = temp_dir / "concat.mp4"
-    _concat(segment_files, concat_mp4)
-
-    print(f"   Add audio...")
-    _add_audio(concat_mp4, project.audio_path, project.final_video_path, total_duration)
-
-    for f in temp_dir.glob("*"):
+            _sc(op, d, w, h, fps, tx, font, fs)
+        if not op.exists():
+            raise RuntimeError(f"seg {i} fail")
+        print(f"  s{i:02d}.mp4 OK")
+        outs.append(op)
+    print("Concat...")
+    cv = td / "c.mp4"
+    _cat(outs, cv)
+    print("Audio...")
+    _aa(cv, project.audio_path, project.final_video_path, dur)
+    for f in td.glob("*"):
         f.unlink()
-    temp_dir.rmdir()
-
+    td.rmdir()
     if project.final_video_path.exists():
-        mb = project.final_video_path.stat().st_size / (1024 * 1024)
-        print(f"   DONE: {project.final_video_path.name} ({mb:.1f}MB)")
+        mb = project.final_video_path.stat().st_size / 1048576
+        print(f"DONE: {mb:.1f}MB")
     else:
-        raise RuntimeError("Final video not created")
+        raise RuntimeError("no output")
 
 
-def _find_clip(index, label, clips):
+def _fc(i, lb, cl):
     m = {"hook": "clip_hook", "cta": "clip_cta"}
-    target = m.get(label, f"clip_{index:02d}")
-    for c in clips:
-        if target in c.stem:
+    t = m.get(lb, f"clip_{i:02d}")
+    for c in cl:
+        if t in c.stem:
             return c
-    if label.startswith("body_"):
-        n = label.split("_")[1]
-        for c in clips:
+    if lb.startswith("body_"):
+        n = lb.split("_")[1]
+        for c in cl:
             if f"clip_{int(n):02d}" in c.stem:
                 return c
-    return clips[index] if index < len(clips) else None
+    return cl[i] if i < len(cl) else None
 
 
-def _escape(text):
-    t = text.replace("\\", "\\\\\\\\")
-    t = t.replace("'", "'\\\\\\''")
-    t = t.replace(":", "\\\\:")
-    t = t.replace("%", "%%%%")
-    t = t.replace("[", "\\\\[")
-    t = t.replace("]", "\\\\]")
-    t = t.replace(";", "\\\\;")
-    t = t.replace("\n", "\\n")
+def _esc(t):
+    for old, new in [
+        ("\\", "\\\\\\\\"),
+        ("'", "'\\\\\\''"),
+        (":", "\\\\:"),
+        ("%", "%%%%"),
+        ("[", "\\\\["),
+        ("]", "\\\\]"),
+        (";", "\\\\;"),
+    ]:
+        t = t.replace(old, new)
     return t
 
 
-def _wrap_text(text, max_chars=18):
-    if len(text) <= max_chars:
-        return text
-    result = []
+def _wrap(t, n=18):
+    if len(t) <= n:
+        return t
+    r = []
     line = ""
-    for ch in text:
-        line += ch
-        if len(line) >= max_chars and ch in " ,.:!?):":
-            result.append(line.strip())
+    for c in t:
+        line += c
+        if len(line) >= n and c in " ,.:!?):":
+            r.append(line.strip())
             line = ""
     if line.strip():
-        result.append(line.strip())
-    return "\n".join(result) if result else text
+        r.append(line.strip())
+    return "\\n".join(r) if r else t
 
 
-def _drawtext(text, font, font_size, dur):
-    if not text or not font:
+def _dt(tx, font, fs):
+    if not tx or not font:
         return ""
-    wrapped = _wrap_text(text)
-    escaped = _escape(wrapped)
-    return (
-        f",drawtext=fontfile='{font}'"
-        f":text='{escaped}'"
-        f":fontsize={font_size}"
-        f":fontcolor=white"
-        f":borderw=3:bordercolor=black"
-        f":x=(w-text_w)/2:y=(h-text_h)/2"
-        f":line_spacing=10"
-        f":box=1:boxcolor=black@0.4:boxborderw=15"
-    )
+    e = _esc(_wrap(tx))
+    dt = "drawtext="
+    dt += f"fontfile='{font}':"
+    dt += f"text='{e}':"
+    dt += f"fontsize={fs}:"
+    dt += "fontcolor=white:"
+    dt += "borderw=3:bordercolor=black:"
+    dt += "x=(w-text_w)/2:y=(h-text_h)/2:"
+    dt += "line_spacing=10:"
+    dt += "box=1:boxcolor=black@0.4:boxborderw=15"
+    return dt
 
 
-def _seg_from_clip(clip, output, dur, w, h, fps, text, font, fs):
-    vf = f"scale={w}:{h}:force_original_aspect_ratio=inc
+def _sv(cp, op, d, w, h, fps, tx, font, fs):
+    vf = f"scale={w}:{h}"
+    vf += ":force_original_aspect_ratio=increase"
+    vf += f",crop={w}:{h}"
+    dt = _dt(tx, font, fs)
+    if dt:
+        vf += "," + dt
+    cmd = [
+        "ffmpeg", "-y", "-i", str(cp),
+        "-t", str(d), "-vf", vf,
+        "-r", str(fps),
+        "-c:v", "libx264", "-preset", "ultrafast",
+        "-pix_fmt", "yuv420p", "-an", str(op),
+    ]
+    _ff(cmd, 120)
+
+
+def _sc(op, d, w, h, fps, tx, font, fs):
+    src = f"color=c=0x141420:s={w}x{h}:d={d}:r={fps}"
+    dt = _dt(tx, font, fs)
+    if dt:
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "lavfi", "-i", src,
+            "-vf", dt,
+            "-t", str(d),
+            "-c:v", "libx264", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p", str(op),
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "lavfi", "-i", src,
+            "-t", str(d),
+            "-c:v", "libx264", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p", str(op),
+        ]
+    _ff(cmd, 120)
+
+
+def _cat(files, op):
+    lf = op.parent / "l.txt"
+    with open(lf, "w") as f:
+        for s in files:
+            f.write(f"file '{s}'\n")
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", str(lf),
+        "-c", "copy", str(op),
+    ]
+    _ff(cmd, 120)
+    lf.unlink()
+
+
+def _aa(vp, ap, op, d):
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(vp), "-i", str(ap),
+        "-t", str(d),
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "128k",
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-shortest", str(op),
+    ]
+    _ff(cmd, 180)
