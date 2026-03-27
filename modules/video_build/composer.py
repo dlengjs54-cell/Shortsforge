@@ -1,6 +1,5 @@
 """
-FFmpeg 기반 영상 조립 (저메모리)
-moviepy/ImageMagick 없이 FFmpeg만 사용
+FFmpeg 기반 영상 조립 (저메모리, ImageMagick 불필요)
 """
 
 import json
@@ -10,9 +9,10 @@ from pathlib import Path
 from core.config_loader import Config
 from core.project_manager import Project
 
+FONT_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+
 
 def _run_ffmpeg(cmd, timeout=180):
-    """FFmpeg 실행 + 에러 로그 출력"""
     print(f"   > {' '.join(cmd[:6])}...")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
@@ -42,201 +42,119 @@ def _compose_inner(project: Project, config: Config):
 
     segments = audio_meta["segments"]
     total_duration = audio_meta["total_duration_sec"]
-    v_width = config.get("video", "width", default=1080)
-    v_height = config.get("video", "height", default=1920)
+    w = config.get("video", "width", default=1080)
+    h = config.get("video", "height", default=1920)
     fps = config.get("video", "fps", default=30)
-    font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
     font_size = config.get("style", "font_size", default=44)
+
+    font = FONT_PATH if Path(FONT_PATH).exists() else ""
+    if not font:
+        print("   WARN: font not found, text disabled")
+    else:
+        print(f"   Font OK: {font}")
 
     available_clips = sorted(project.media_dir.glob("*.mp4"))
     temp_dir = project.dir / "_temp"
     temp_dir.mkdir(exist_ok=True)
 
-    # Check font
-    fp = Path(font_path)
-    if not fp.exists():
-        print(f"   WARN: font not found at {font_path}, trying fallback...")
-        for candidate in [
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-            "/app/assets/fonts/NotoSansKR-Bold.ttf",
-        ]:
-            if Path(candidate).exists():
-                font_path = candidate
-                print(f"   Using font: {font_path}")
-                break
-        else:
-            print("   WARN: No font found, text overlay disabled")
-            font_path = ""
-
     segment_files = []
 
     for i, seg in enumerate(segments):
-        seg_duration = seg["end"] - seg["start"]
+        dur = seg["end"] - seg["start"]
         text = seg.get("text", "")
         label = seg["label"]
-        print(f"   [{label}] {seg_duration:.1f}s - {text[:30]}...")
+        print(f"   [{label}] {dur:.1f}s - {text[:30]}...")
 
         clip_path = _find_clip(i, label, available_clips)
-        seg_output = temp_dir / f"seg_{i:02d}.mp4"
+        seg_out = temp_dir / f"seg_{i:02d}.mp4"
 
         if clip_path and clip_path.exists():
-            print(f"   Using clip: {clip_path.name}")
-            _make_segment_from_clip(
-                clip_path, seg_output, seg_duration,
-                v_width, v_height, fps, text, font_path, font_size
-            )
+            print(f"   clip: {clip_path.name}")
+            _seg_from_clip(clip_path, seg_out, dur, w, h, fps, text, font, font_size)
         else:
-            print(f"   No clip, using color background")
-            _make_segment_from_color(
-                seg_output, seg_duration,
-                v_width, v_height, fps, text, font_path, font_size
-            )
+            print(f"   clip: color bg")
+            _seg_from_color(seg_out, dur, w, h, fps, text, font, font_size)
 
-        if not seg_output.exists():
-            raise RuntimeError(f"Segment {i} creation failed")
-        print(f"   seg_{i:02d}.mp4 OK ({seg_output.stat().st_size // 1024}KB)")
-        segment_files.append(seg_output)
+        if not seg_out.exists():
+            raise RuntimeError(f"Segment {i} failed")
+        print(f"   seg_{i:02d}.mp4 OK ({seg_out.stat().st_size // 1024}KB)")
+        segment_files.append(seg_out)
 
-    print(f"   Concatenating {len(segment_files)} segments...")
-    concat_video = temp_dir / "concat.mp4"
-    _concat_segments(segment_files, concat_video)
+    print(f"   Concat {len(segment_files)} segments...")
+    concat_mp4 = temp_dir / "concat.mp4"
+    _concat(segment_files, concat_mp4)
 
-    if not concat_video.exists():
-        raise RuntimeError("Concat failed")
-    print(f"   concat.mp4 OK ({concat_video.stat().st_size // 1024}KB)")
+    print(f"   Add audio...")
+    _add_audio(concat_mp4, project.audio_path, project.final_video_path, total_duration)
 
-    print(f"   Adding audio...")
-    _add_audio(concat_video, project.audio_path, project.final_video_path, total_duration)
-
-    # Cleanup
     for f in temp_dir.glob("*"):
         f.unlink()
     temp_dir.rmdir()
 
     if project.final_video_path.exists():
-        size_mb = project.final_video_path.stat().st_size / (1024 * 1024)
-        print(f"   DONE: {project.final_video_path.name} ({size_mb:.1f}MB)")
+        mb = project.final_video_path.stat().st_size / (1024 * 1024)
+        print(f"   DONE: {project.final_video_path.name} ({mb:.1f}MB)")
     else:
         raise RuntimeError("Final video not created")
 
 
-def _find_clip(index, label, available_clips):
-    label_map = {"hook": "clip_hook", "cta": "clip_cta"}
-    target = label_map.get(label, f"clip_{index:02d}")
-    for c in available_clips:
+def _find_clip(index, label, clips):
+    m = {"hook": "clip_hook", "cta": "clip_cta"}
+    target = m.get(label, f"clip_{index:02d}")
+    for c in clips:
         if target in c.stem:
             return c
     if label.startswith("body_"):
-        order = label.split("_")[1]
-        for c in available_clips:
-            if f"clip_{int(order):02d}" in c.stem:
+        n = label.split("_")[1]
+        for c in clips:
+            if f"clip_{int(n):02d}" in c.stem:
                 return c
-    if index < len(available_clips):
-        return available_clips[index]
-    return None
+    return clips[index] if index < len(clips) else None
 
 
-def _escape_drawtext(text):
-    """FFmpeg drawtext filter escaping"""
-    text = text.replace("\\", "\\\\\\\\")
-    text = text.replace("'", "'\\\\\\''")
-    text = text.replace(":", "\\\\:")
-    text = text.replace("%", "%%%%")
-    text = text.replace("[", "\\\\[")
-    text = text.replace("]", "\\\\]")
-    text = text.replace(";", "\\\\;")
-    return text
+def _escape(text):
+    t = text.replace("\\", "\\\\\\\\")
+    t = t.replace("'", "'\\\\\\''")
+    t = t.replace(":", "\\\\:")
+    t = t.replace("%", "%%%%")
+    t = t.replace("[", "\\\\[")
+    t = t.replace("]", "\\\\]")
+    t = t.replace(";", "\\\\;")
+    t = t.replace("\n", "\\n")
+    return t
 
 
-def _build_drawtext(text, font_path, font_size):
-    """Build drawtext filter string"""
-    if not text or not font_path:
+def _wrap_text(text, max_chars=18):
+    if len(text) <= max_chars:
+        return text
+    result = []
+    line = ""
+    for ch in text:
+        line += ch
+        if len(line) >= max_chars and ch in " ,.:!?):":
+            result.append(line.strip())
+            line = ""
+    if line.strip():
+        result.append(line.strip())
+    return "\n".join(result) if result else text
+
+
+def _drawtext(text, font, font_size, dur):
+    if not text or not font:
         return ""
-    escaped = _escape_drawtext(text)
+    wrapped = _wrap_text(text)
+    escaped = _escape(wrapped)
     return (
-        f",drawtext=fontfile='{font_path}'"
+        f",drawtext=fontfile='{font}'"
         f":text='{escaped}'"
         f":fontsize={font_size}"
         f":fontcolor=white"
-        f":borderw=2:bordercolor=black"
+        f":borderw=3:bordercolor=black"
         f":x=(w-text_w)/2:y=(h-text_h)/2"
-        f":line_spacing=8"
+        f":line_spacing=10"
+        f":box=1:boxcolor=black@0.4:boxborderw=15"
     )
 
 
-def _make_segment_from_clip(clip_path, output, duration, w, h, fps, text, font_path, font_size):
-    vf = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
-    vf += _build_drawtext(text, font_path, font_size)
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(clip_path),
-        "-t", str(duration),
-        "-vf", vf,
-        "-r", str(fps),
-        "-c:v", "libx264", "-preset", "ultrafast",
-        "-pix_fmt", "yuv420p",
-        "-an",
-        str(output)
-    ]
-    _run_ffmpeg(cmd, timeout=120)
-
-
-def _make_segment_from_color(output, duration, w, h, fps, text, font_path, font_size):
-    vf_src = f"color=c=0x141420:s={w}x{h}:d={duration}:r={fps}"
-    drawtext = _build_drawtext(text, font_path, font_size)
-
-    if drawtext:
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", vf_src,
-            "-vf", drawtext.lstrip(","),
-            "-t", str(duration),
-            "-c:v", "libx264", "-preset", "ultrafast",
-            "-pix_fmt", "yuv420p",
-            str(output)
-        ]
-    else:
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", vf_src,
-            "-t", str(duration),
-            "-c:v", "libx264", "-preset", "ultrafast",
-            "-pix_fmt", "yuv420p",
-            str(output)
-        ]
-    _run_ffmpeg(cmd, timeout=120)
-
-
-def _concat_segments(segment_files, output):
-    list_file = output.parent / "concat_list.txt"
-    with open(list_file, "w") as f:
-        for seg in segment_files:
-            f.write(f"file '{seg}'\n")
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", str(list_file),
-        "-c", "copy",
-        str(output)
-    ]
-    _run_ffmpeg(cmd, timeout=120)
-    list_file.unlink()
-
-
-def _add_audio(video_path, audio_path, output, duration):
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(video_path),
-        "-i", str(audio_path),
-        "-t", str(duration),
-        "-c:v", "copy",
-        "-c:a", "aac", "-b:a", "128k",
-        "-map", "0:v:0", "-map", "1:a:0",
-        "-shortest",
-        str(output)
-    ]
-    _run_ffmpeg(cmd, timeout=180)
-
+def _seg_from_clip(clip, output, dur, w, h, fps, text, font, fs):
+    vf = f"scale={w}:{h}:force_original_aspect_ratio=inc
