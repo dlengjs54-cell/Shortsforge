@@ -6,11 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-RUN if [ -f /etc/ImageMagick-6/policy.xml ]; then \
-    sed -i 's/<policy domain="path" rights="none" pattern="@\*"/<policy domain="path" rights="read|write" pattern="@*"/' /etc/ImageMagick-6/policy.xml; \
-    sed -i '/<policy domain="coder" rights="none"/d' /etc/ImageMagick-6/policy.xml; \
-    sed -i '/<policy domain="delegate" rights="none"/d' /etc/ImageMagick-6/policy.xml; \
-    fi
+RUN echo '<policymap><policy domain="Undefined" rights="all"/></policymap>' > /etc/ImageMagick-6/policy.xml
 
 WORKDIR /app
 
@@ -24,6 +20,6 @@ RUN mkdir -p assets/fonts && \
 
 RUN mkdir -p output
 
-EXPOSE 8080
+EXPOSE 5000
 
 CMD ["python", "run_cloud.py"]
