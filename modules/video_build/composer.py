@@ -71,7 +71,6 @@ def _run(cmd, stage="?", timeout=180):
 
 
 def _probe(p):
-    """Get duration and resolution"""
     try:
         r = subprocess.run([
             "ffprobe", "-v", "error",
@@ -159,18 +158,20 @@ def _inner(project, config):
     tmp = project.dir / "_temp"
     tmp.mkdir(exist_ok=True)
 
-    # Step 1: Pre-downscale all clips
     print(f"   === STEP 1: pre-downscale ===")
     ds_clips = {}
     for cp in clips:
         dur, cw, ch = _probe(cp)
         print(f"   {cp.name}: {cw}x{ch} {dur:.1f}s")
         ds = tmp / f"ds_{cp.name}"
+        vf_ds = (
+            f"scale={w}:{h}"
+            f":force_original_aspect_ratio=increase"
+            f",crop={w}:{h}"
+        )
         _run([
             "ffmpeg", "-y", "-i", str(cp),
-            "-vf", f"scale={w}:{h}:"
-            f"force_original_aspect_ratio=increase,"
-            f"crop={w}:{h}",
+            "-vf", vf_ds,
             "-r", str(fps),
             "-c:v", "libx264",
             *FF_MEM,
@@ -182,7 +183,6 @@ def _inner(project, config):
             kb = ds.stat().st_size // 1024
             print(f"   ds_{cp.name} OK {kb}KB")
 
-    # Step 2: Build segments
     print(f"   === STEP 2: segments ===")
     outs = []
     for i, seg in enumerate(segs):
@@ -218,17 +218,14 @@ def _inner(project, config):
         print(f"   s{i:02d}.mp4 OK {kb}KB")
         outs.append(op)
 
-    # Step 3: Concat
     print(f"   === STEP 3: concat ===")
     cv = tmp / "c.mp4"
     _concat(outs, cv)
 
-    # Step 4: Mux audio
     print(f"   === STEP 4: mux ===")
     _mux(cv, project.audio_path,
          project.final_video_path, tdur)
 
-    # Cleanup
     for f in tmp.glob("*"):
         f.unlink()
     tmp.rmdir()
@@ -257,7 +254,6 @@ def _find_clip(i, lb, cl):
 
 
 def _seg_trim(ds, op, d, fps, tf, font, fs):
-    """Already downscaled, just trim + text"""
     dt = _dt(tf, font, fs)
     if dt:
         _run([
@@ -281,7 +277,6 @@ def _seg_trim(ds, op, d, fps, tf, font, fs):
 
 
 def _seg_pad(ds, op, td, cd, w, h, fps, tf, font, fs):
-    """Short clip: freeze last frame"""
     pad = td - cd
     vf = f"tpad=stop_mode=clone:stop_duration={pad:.2f}"
     dt = _dt(tf, font, fs)
@@ -299,7 +294,6 @@ def _seg_pad(ds, op, td, cd, w, h, fps, tf, font, fs):
 
 
 def _seg_bg(op, d, w, h, fps, tf, font, fs):
-    """Color background + text"""
     src = f"color=c=0x141420:s={w}x{h}:d={d}:r={fps}"
     dt = _dt(tf, font, fs)
     if dt:
@@ -347,4 +341,3 @@ def _mux(vp, ap, op, d):
         "-map", "0:v:0", "-map", "1:a:0",
         "-shortest", str(op),
     ], stage="mux", timeout=120)
-```
